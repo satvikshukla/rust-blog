@@ -1,10 +1,20 @@
+use my::Value;
 use mysql as my;
-use std::error::Error;
 
 #[derive(Debug, PartialEq, Eq)]
 struct User {
     username: String,
     password: String,
+}
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct Post {
+    username: String,
+    id: i32,
+    body: String,
+    timestamp: String,
 }
 
 fn create_pool() -> my::Pool {
@@ -20,18 +30,36 @@ fn create_pool() -> my::Pool {
 pub fn create_tables() {
     clear_tables();
     let pool = create_pool();
+
     pool.prep_exec(
         r"CREATE TABLE Users (
                          username VARCHAR(20) PRIMARY KEY,
-                         password TEXT not null
-                     )",
+                         password TEXT NOT NULL)",
         (),
     )
     .unwrap();
+    // Should probably create index on username
+    pool.prep_exec(
+        r"CREATE TABLE Posts (
+                         username VARCHAR(20),
+                         id INT AUTO_INCREMENT PRIMARY KEY,
+                         body TEXT ,
+                         timestamp DATETIME,
+                     FOREIGN KEY (username)
+                     REFERENCES Users(username))",
+        (),
+    )
+    .unwrap();
+
+    // pool.prep_exec(r"CREATE TABLE Feed (
+    //                      user VARCHAR(20),
+    //                      following VARCHAR(20))", ()).unwrap();
 }
 
 fn clear_tables() {
     let pool = create_pool();
+    pool.prep_exec(r"DROP TABLE IF EXISTS Posts", ()).unwrap();
+    // pool.prep_exec(r"DROP TABLE IF EXISTS Feed", ()).unwrap();
     pool.prep_exec(r"DROP TABLE IF EXISTS Users", ()).unwrap();
 }
 
@@ -39,12 +67,19 @@ pub fn create_user(username: &str, password: &str) {
     let pool = create_pool();
     pool.prep_exec(
         "INSERT INTO Users
-                    (username, password)
-                    VALUES
-                    (?, ?)",
+         (username, password)
+         VALUES
+         (?, ?)",
         (&username, &password),
     )
     .unwrap();
+
+    // pool.prep_exec(
+    //     "INSERT INTO Feed
+    //      (user, following)
+    //      VALUES
+    //      (?, ?)",
+    //      (&username, &username)).unwrap();
 }
 
 pub fn user_exists(username: &str) -> bool {
@@ -52,11 +87,12 @@ pub fn user_exists(username: &str) -> bool {
     let result = pool
         .prep_exec(
             "SELECT COUNT(*)
-                                 FROM Users u
-                                 WHERE u.username = ?",
+             FROM Users u
+             WHERE u.username = ?",
             (&username,),
         )
         .unwrap();
+
     for row in result {
         let c = my::from_row::<i32>(row.unwrap());
         return c == 1;
@@ -69,8 +105,8 @@ pub fn check_credentials(username: &str) -> String {
     let result = pool
         .prep_exec(
             "SELECT u.password
-                                 FROM Users u
-                                 WHERE u.username = ?",
+             FROM Users u
+             WHERE u.username = ?",
             (&username,),
         )
         .unwrap();
@@ -81,9 +117,57 @@ pub fn check_credentials(username: &str) -> String {
     return String::new();
 }
 
+pub fn create_post(username: &str, body: &str) {
+    let pool = create_pool();
+    pool.prep_exec(
+        "INSERT INTO Posts
+         (username, body, timestamp)
+         VALUES
+         (?, ?, CURRENT_TIMESTAMP)",
+        (&username, &body),
+    )
+    .unwrap();
+}
+
+pub fn get_feed(username: &str) -> Vec<Post> {
+    let pool = create_pool();
+    // let result = pool.prep_exec(
+    //     "SELECT *
+    //      FROM Posts p, (SELECT following FROM Feed WHERE user = ?) f
+    //      WHERE p.username = f.following
+    //      ORDER BY p.timestamp DESC", (&username,)).unwrap();
+    let feed: Vec<Post> = pool
+        .prep_exec(
+            "SELECT *
+            FROM Posts p
+            WHERE p.username = ?
+            ORDER BY p.timestamp DESC",
+            (&username,),
+        )
+        .map(|result| {
+            result
+                .map(|x| x.unwrap())
+                .map(|row| {
+                    let (username, id, body, timestamp) =
+                        my::from_row::<(String, i32, String, Value)>(row);
+                    Post {
+                        username: username,
+                        id: id,
+                        body: body,
+                        timestamp: timestamp.as_sql(true),
+                    }
+                })
+                .collect()
+        })
+        .unwrap();
+    feed
+}
+
 fn main() {
-    println!("Table dropped");
-    println!("Yay!");
+    setup();
+    create_post("test", "this is the body of the post.");
+    println!("{:?}", get_feed("test"));
+    cleanup();
 }
 
 pub fn setup() {
@@ -99,10 +183,10 @@ pub fn setup() {
 }
 
 pub fn cleanup() {
-    let pool = create_pool();
-    pool.prep_exec(r"DROP TABLE Users", ()).unwrap();
+    clear_tables();
 }
 
+// Test using `cargo test -- --test-threads=1`
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +230,13 @@ mod tests {
         setup();
         assert_eq!(check_credentials("tes2t"), "");
         assert_eq!(check_credentials("test"), "1234");
+        cleanup();
+    }
+
+    #[test]
+    fn check_create_post() {
+        setup();
+        create_post("test", "this is the body of the post.");
         cleanup();
     }
 }

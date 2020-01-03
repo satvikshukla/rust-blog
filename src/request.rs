@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
+pub struct CreatePostRequest {
+    body: String,
+}
+
+impl CreatePostRequest {
+    pub fn get_body(&self) -> &str {
+        &self.body
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct LoginRequest {
     username: String,
     password: String,
